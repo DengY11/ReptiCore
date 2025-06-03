@@ -1,7 +1,7 @@
 /*
  * STM32F407 温湿度智能控制系统
  * 主程序入口文件 - main.cpp
- * 现代C++ + FreeRTOS + STM32 HAL 重构版本
+ * 现代C++17 + FreeRTOS + STM32 HAL 重构版本
  */
 
 #include "main.h"
@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <type_traits>
 
 #include "DHT22.h"
 #include "FreeRTOS.h"
@@ -62,19 +63,33 @@ void DisplayTask(void *argument);
 void ControlTask(void *argument);
 }
 
+// C++17 SFINAE类型特征：检查函数是否可以用SensorData&调用并返回void
+template<typename F, typename = void>
+struct is_sensor_data_processor : std::false_type {};
+
+template<typename F>
+struct is_sensor_data_processor<F, 
+    std::void_t<decltype(std::declval<F>()(std::declval<RC::SensorData&>()))>>
+    : std::is_same<void, decltype(std::declval<F>()(std::declval<RC::SensorData&>()))> {};
+
+template<typename F>
+constexpr bool is_sensor_data_processor_v = is_sensor_data_processor<F>::value;
+
 // 现代C++风格的UART打印函数
 void printMessage(const std::string &message) {
   HAL_UART_Transmit(&huart1, reinterpret_cast<const uint8_t *>(message.c_str()),
                     static_cast<uint16_t>(message.length()), 1000);
 }
 
-// 使用lambda表达式的传感器数据保护函数
-auto protectedSensorDataAccess = [](auto func) -> void {
+// 使用C++17 SFINAE的传感器数据保护函数
+template<typename F>
+auto protectedSensorDataAccess(F&& func) -> 
+    std::enable_if_t<is_sensor_data_processor_v<std::decay_t<F>>, void> {
   if (xSemaphoreTake(sensorDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-    func(g_sensorData);
+    std::forward<F>(func)(g_sensorData);
     xSemaphoreGive(sensorDataMutex);
   }
-};
+}
 
 int main(void) {
   // HAL 库初始化
@@ -193,7 +208,7 @@ void DisplayTask(void *argument) {
 
     // 读取传感器数据（使用现代C++拷贝语义）
     RC::SensorData localSensorData{};
-    protectedSensorDataAccess([&](const RC::SensorData &data) {
+    protectedSensorDataAccess([&](RC::SensorData &data) {
       localSensorData = data;  // 使用默认拷贝构造
     });
 
@@ -225,7 +240,7 @@ void ControlTask(void *argument) {
     // 读取传感器数据（使用现代C++拷贝语义）
     RC::SensorData localSensorData{};
     protectedSensorDataAccess(
-        [&](const RC::SensorData &data) { localSensorData = data; });
+        [&](RC::SensorData &data) { localSensorData = data; });
 
     if (localSensorData.isValid()) {
       // 直接使用现代C++接口进行控制
