@@ -38,14 +38,11 @@ extern "C" {
 #define OLED_CMD_SET_COLUMN_ADDR 0x21
 #define OLED_CMD_SET_PAGE_ADDR 0x22
 
-// 字体大小
 #define FONT_SIZE_8 8
 #define FONT_SIZE_16 16
 
-// OLED状态枚举
 typedef enum { OLED_OK = 0, OLED_ERROR } OLED_Status_t;
 
-// 函数声明
 OLED_Status_t OLED_Init(void);
 OLED_Status_t OLED_Clear(void);
 OLED_Status_t OLED_Refresh(void);
@@ -58,7 +55,6 @@ OLED_Status_t OLED_ShowTemperature(float temperature, float target);
 OLED_Status_t OLED_ShowHumidity(float humidity, float target);
 OLED_Status_t OLED_ShowSystemStatus(void);
 
-// 内部函数
 OLED_Status_t OLED_WriteCommand(uint8_t cmd);
 OLED_Status_t OLED_WriteData(uint8_t *data, uint16_t len);
 void OLED_DrawChar(uint8_t x, uint8_t y, char ch, uint8_t fontSize);

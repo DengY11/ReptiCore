@@ -6,14 +6,14 @@
 
 #pragma once
 
-#include "RelayControl.h"
-#include "main.h"
-
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
+
+#include "RelayControl.h"
+#include "main.h"
 
 // 自定义clamp函数（C++14兼容）
 namespace detail {
@@ -121,16 +121,10 @@ class State {
   Mode getMode() const noexcept { return mode_; }
   bool isHeaterEnabled() const noexcept { return heaterEnabled_; }
   bool isFanEnabled() const noexcept { return fanEnabled_; }
-  bool isHumidifierEnabled() const noexcept {
-    return humidifierEnabled_;
-  }
-  uint32_t getLastControlTime() const noexcept {
-    return lastControlTime_;
-  }
+  bool isHumidifierEnabled() const noexcept { return humidifierEnabled_; }
+  uint32_t getLastControlTime() const noexcept { return lastControlTime_; }
   float getTempOutput() const noexcept { return tempOutput_; }
-  float getHumidityOutput() const noexcept {
-    return humidityOutput_;
-  }
+  float getHumidityOutput() const noexcept { return humidityOutput_; }
 
   // Setter方法
   void setMode(Mode mode) noexcept { mode_ = mode; }

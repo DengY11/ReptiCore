@@ -13,29 +13,27 @@ namespace ReptileController::Relay {
 // 全局继电器控制器实例
 Controller g_controller;
 
-// 继电器控制器实现
 void Controller::initialize() noexcept {
   if (initialized_) return;
-  
-  // 初始化所有继电器为关闭状态
   turnOffAll();
   initialized_ = true;
 }
 
 void Controller::setPhysicalState(Type type, State state) const noexcept {
   if (!isValidType(type)) return;
-  
+
   const auto& config = configs_[static_cast<size_t>(type)];
-  GPIO_PinState pinState = (state == State::ON) ? 
-    (config.activeLevel ? GPIO_PIN_SET : GPIO_PIN_RESET) :
-    (config.activeLevel ? GPIO_PIN_RESET : GPIO_PIN_SET);
-    
+  GPIO_PinState pinState =
+      (state == State::ON)
+          ? (config.activeLevel ? GPIO_PIN_SET : GPIO_PIN_RESET)
+          : (config.activeLevel ? GPIO_PIN_RESET : GPIO_PIN_SET);
+
   HAL_GPIO_WritePin(config.port, config.pin, pinState);
 }
 
 void Controller::setState(Type type, State state) noexcept {
   if (!initialized_ || !isValidType(type)) return;
-  
+
   const size_t index = static_cast<size_t>(type);
   relayStates_[index] = (state == State::ON);
   setPhysicalState(type, state);
@@ -43,14 +41,14 @@ void Controller::setState(Type type, State state) noexcept {
 
 State Controller::getState(Type type) const noexcept {
   if (!isValidType(type)) return State::OFF;
-  
+
   const size_t index = static_cast<size_t>(type);
   return relayStates_[index] ? State::ON : State::OFF;
 }
 
 void Controller::toggleState(Type type) noexcept {
   if (!initialized_ || !isValidType(type)) return;
-  
+
   const State currentState = getState(type);
   const State newState = (currentState == State::ON) ? State::OFF : State::ON;
   setState(type, newState);
@@ -65,20 +63,15 @@ void Controller::turnOffAll() noexcept {
 }
 
 void Controller::safetyCheck() noexcept {
-  // 实现安全检查逻辑
   static uint32_t lastCheckTime = 0;
   const uint32_t currentTime = HAL_GetTick();
-  
-  // 每秒检查一次
+
   if (currentTime - lastCheckTime >= 1000) {
     lastCheckTime = currentTime;
-    
-    // 检查是否有设备运行时间过长（防止过热）
     static uint32_t heaterOnTime = 0;
-    
+
     if (getState(Type::HEATER) == State::ON) {
-      heaterOnTime += 1000;  // 累加运行时间
-      
+      heaterOnTime += 1000;
       // 如果加热器连续运行超过30分钟，强制关闭
       if (heaterOnTime > 30 * 60 * 1000) {
         setState(Type::HEATER, State::OFF);
@@ -93,7 +86,7 @@ void Controller::safetyCheck() noexcept {
 
 void Controller::emergencyStop() noexcept {
   turnOffAll();
-  initialized_ = false;  // 标记为未初始化，需要重新初始化
+  initialized_ = false;
 }
 
 }  // namespace ReptileController::Relay
@@ -128,12 +121,12 @@ void RelayControl_AllOff(void) {
 
 RelayStatus_t RelayControl_GetStatus(void) {
   RelayStatus_t status = {};
-  
+
   status.heaterState = RelayControl_Get(RELAY_HEATER);
   status.fanState = RelayControl_Get(RELAY_FAN);
   status.humidifierState = RelayControl_Get(RELAY_HUMIDIFIER);
   status.lastUpdateTime = HAL_GetTick();
-  
+
   return status;
 }
 

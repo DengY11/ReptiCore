@@ -21,29 +21,21 @@
 #include "semphr.h"
 #include "task.h"
 
-// FreeRTOS 任务句柄
 TaskHandle_t sensorTaskHandle = nullptr;
 TaskHandle_t displayTaskHandle = nullptr;
 TaskHandle_t controlTaskHandle = nullptr;
 
-// 全局变量
 extern "C" {
 UART_HandleTypeDef huart1;
 I2C_HandleTypeDef hi2c1;
 TIM_HandleTypeDef htim2;
 }
 
-// 命名空间别名
 namespace RC = ReptileController;
-
-// 全局实例
 RC::SensorData g_sensorData;
-RC::ControlConfig g_controlConfig{29.0f, 55.0f, 1.0f, 5.0f};  // 球蟒配置
-
-// 互斥量和信号量
+RC::ControlConfig g_controlConfig{30.0f, 40.0f, 2.0f, 8.0f};  // 猪鼻蛇配置
 SemaphoreHandle_t sensorDataMutex = nullptr;
 
-// 系统初始化函数声明
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
@@ -51,71 +43,60 @@ static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
 
 // FreeRTOS 任务函数声明
+// 需要c接口
 extern "C" {
 void SensorTask(void *argument);
 void DisplayTask(void *argument);
 void ControlTask(void *argument);
 }
 
-// C++17 SFINAE类型特征：检查函数是否可以用SensorData&调用并返回void
-template<typename F, typename = void>
+// 检查函数是否可以用SensorData&调用并返回void
+template <typename F, typename = void>
 struct is_sensor_data_processor : std::false_type {};
-
-template<typename F>
-struct is_sensor_data_processor<F, 
-    std::void_t<decltype(std::declval<F>()(std::declval<RC::SensorData&>()))>>
-    : std::is_same<void, decltype(std::declval<F>()(std::declval<RC::SensorData&>()))> {};
-
-template<typename F>
+template <typename F>
+struct is_sensor_data_processor<F, std::void_t<decltype(std::declval<F>()(
+                                       std::declval<RC::SensorData &>()))>>
+    : std::is_same<void, decltype(std::declval<F>()(
+                             std::declval<RC::SensorData &>()))> {};
+template <typename F>
 constexpr bool is_sensor_data_processor_v = is_sensor_data_processor<F>::value;
 
-// 现代C++风格的UART打印函数
-void printMessage(const std::string &message) {
-  HAL_UART_Transmit(&huart1, reinterpret_cast<const uint8_t *>(message.c_str()),
-                    static_cast<uint16_t>(message.length()), 1000);
-}
-
-// 使用C++17 SFINAE的传感器数据保护函数
-template<typename F>
-auto protectedSensorDataAccess(F&& func) -> 
-    std::enable_if_t<is_sensor_data_processor_v<std::decay_t<F>>, void> {
+template <typename F>
+auto protectedSensorDataAccess(F &&func)
+    -> std::enable_if_t<is_sensor_data_processor_v<std::decay_t<F>>, void> {
   if (xSemaphoreTake(sensorDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
     std::forward<F>(func)(g_sensorData);
     xSemaphoreGive(sensorDataMutex);
   }
 }
 
+void printMessage(const std::string &message) {
+  HAL_UART_Transmit(&huart1, reinterpret_cast<const uint8_t *>(message.c_str()),
+                    static_cast<uint16_t>(message.length()), 1000);
+}
+
 int main(void) {
-  // HAL 库初始化
   HAL_Init();
-
-  // 配置系统时钟
   SystemClock_Config();
-
-  // 初始化GPIO和外设
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_I2C1_Init();
   MX_TIM2_Init();
 
-  // 初始化各个模块（现代C++风格）
   RC::DHT22::g_sensor.initialize();
   OLED_Init();
   RC::Relay::g_controller.initialize();
   TempControl_Init();
 
-  // 打印启动信息（使用现代C++字符串）
   printMessage("STM32F407 爬宠温湿度控制系统启动...\r\n");
-  printMessage("配置: 球蟒模式 - 目标温度29°C, 目标湿度55%\r\n");
+  printMessage("配置: 猪鼻蛇模式 - 目标温度30°C, 目标湿度40%\r\n");
 
-  // 创建互斥量
   sensorDataMutex = xSemaphoreCreateMutex();
   if (sensorDataMutex == nullptr) {
     printMessage("错误: 无法创建互斥量\r\n");
     Error_Handler();
   }
 
-  // 创建 FreeRTOS 任务
   const UBaseType_t sensorPriority = 3;
   const UBaseType_t displayPriority = 2;
   const UBaseType_t controlPriority = 4;
@@ -126,32 +107,25 @@ int main(void) {
     printMessage("错误: 无法创建传感器任务\r\n");
     Error_Handler();
   }
-
   if (xTaskCreate(DisplayTask, "DisplayTask", stackSize, nullptr,
                   displayPriority, &displayTaskHandle) != pdPASS) {
     printMessage("错误: 无法创建显示任务\r\n");
     Error_Handler();
   }
-
   if (xTaskCreate(ControlTask, "ControlTask", stackSize, nullptr,
                   controlPriority, &controlTaskHandle) != pdPASS) {
     printMessage("错误: 无法创建控制任务\r\n");
     Error_Handler();
   }
-
   printMessage("所有任务创建成功，启动调度器...\r\n");
-
-  // 启动调度器
   vTaskStartScheduler();
 
-  // 永远不应该到达这里
   printMessage("错误: 调度器意外退出\r\n");
   while (true) {
     HAL_Delay(1000);
   }
 }
 
-// 传感器数据采集任务（现代C++风格）
 void SensorTask(void *argument) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
   constexpr TickType_t xFrequency = pdMS_TO_TICKS(2000);  // 2秒周期
@@ -159,52 +133,37 @@ void SensorTask(void *argument) {
   printMessage("[传感器任务] 启动\r\n");
 
   for (;;) {
-    // 读取DHT22传感器数据（使用现代C++结构体）
     const auto sensorResult = RC::DHT22::g_sensor.readData();
-
     if (sensorResult.valid) {
       const float temperature = sensorResult.temperature;
       const float humidity = sensorResult.humidity;
-
-      // 使用lambda表达式保护共享数据
       protectedSensorDataAccess([&](RC::SensorData &data) {
         data.updateData(temperature, humidity, HAL_GetTick());
       });
-
-      // 发送调试信息（使用格式化字符串）
       const std::string debugMsg =
           "[传感器] 温度: " + std::to_string(temperature) +
           "°C, 湿度: " + std::to_string(humidity) + "%\r\n";
       printMessage(debugMsg);
     } else {
-      // 使用lambda表达式标记数据无效
       protectedSensorDataAccess(
           [](RC::SensorData &data) { data.invalidate(); });
-
       printMessage("[传感器] DHT22读取失败!\r\n");
     }
-
-    // 精确延时
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
-// 显示任务（现代C++风格）
 void DisplayTask(void *argument) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  constexpr TickType_t xFrequency = pdMS_TO_TICKS(500);  // 500ms周期
+  constexpr TickType_t xFrequency = pdMS_TO_TICKS(500);
 
   printMessage("[显示任务] 启动\r\n");
 
   for (;;) {
-    // 更新OLED显示
     OLED_Clear();
-
-    // 读取传感器数据（使用现代C++拷贝语义）
     RC::SensorData localSensorData{};
-    protectedSensorDataAccess([&](RC::SensorData &data) {
-      localSensorData = data;  // 使用默认拷贝构造
-    });
+    protectedSensorDataAccess(
+        [&](RC::SensorData &data) { localSensorData = data; });
 
     if (localSensorData.isValid()) {
       OLED_ShowTemperature(localSensorData.getTemperature(),
@@ -217,38 +176,31 @@ void DisplayTask(void *argument) {
 
     OLED_ShowSystemStatus();
     OLED_Refresh();
-
-    // 精确延时
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
-// 控制任务（现代C++风格）
 void ControlTask(void *argument) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  constexpr TickType_t xFrequency = pdMS_TO_TICKS(1000);  // 1秒周期
+  constexpr TickType_t xFrequency = pdMS_TO_TICKS(1000);
 
   printMessage("[控制任务] 启动\r\n");
 
   for (;;) {
-    // 读取传感器数据（使用现代C++拷贝语义）
     RC::SensorData localSensorData{};
     protectedSensorDataAccess(
         [&](RC::SensorData &data) { localSensorData = data; });
 
     if (localSensorData.isValid()) {
-      // 直接使用现代C++接口进行控制
       if (RC::Control::g_controller) {
         RC::Control::g_controller->update(localSensorData, g_controlConfig);
       }
     }
 
-    // 精确延时
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
-// 系统时钟配置
 void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {};
@@ -281,14 +233,11 @@ void SystemClock_Config(void) {
   }
 }
 
-// GPIO初始化（现代C++风格）
 static void MX_GPIO_Init(void) {
-  // 启用GPIO时钟
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
-  // 配置继电器控制引脚 (PC13, PC14, PC15)
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15,
                     GPIO_PIN_RESET);
 
@@ -299,7 +248,6 @@ static void MX_GPIO_Init(void) {
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  // 配置DHT22数据引脚 (PA1)
   GPIO_InitStruct.Pin = GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
@@ -307,7 +255,6 @@ static void MX_GPIO_Init(void) {
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
-// USART1初始化
 static void MX_USART1_UART_Init(void) {
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
@@ -323,7 +270,6 @@ static void MX_USART1_UART_Init(void) {
   }
 }
 
-// I2C1初始化 (用于OLED)
 static void MX_I2C1_Init(void) {
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 400000;
@@ -340,7 +286,6 @@ static void MX_I2C1_Init(void) {
   }
 }
 
-// TIM2初始化 (用于精确延时)
 static void MX_TIM2_Init(void) {
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 168 - 1;  // 1MHz计数频率
@@ -355,16 +300,11 @@ static void MX_TIM2_Init(void) {
   HAL_TIM_Base_Start(&htim2);
 }
 
-// 错误处理函数（现代C++风格）
 void Error_Handler(void) {
   __disable_irq();
   printMessage("错误: 系统进入错误处理状态\r\n");
-
-  // 使用constexpr延时
   constexpr uint32_t errorBlinkDelay = 200;
-
   while (true) {
-    // LED闪烁指示错误
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
     HAL_Delay(errorBlinkDelay);
   }

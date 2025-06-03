@@ -57,7 +57,6 @@ const auto HUMIDIFIER_PIN = GPIO_PIN_15;
 }  // namespace Relay
 }  // namespace Pins
 
-// 传感器数据类
 class SensorData {
  private:
   float temperature_{0.0f};     // 温度 (°C)
@@ -67,29 +66,22 @@ class SensorData {
 
  public:
   SensorData() = default;
-
-  // 使用统一初始化
   SensorData(float temp, float hum, uint32_t updateTime, bool valid = true)
       : temperature_{temp},
         humidity_{hum},
         lastUpdateTime_{updateTime},
         isValid_{valid} {}
 
-  // Getter方法（const正确性）
   float getTemperature() const noexcept { return temperature_; }
   float getHumidity() const noexcept { return humidity_; }
-  uint32_t getLastUpdateTime() const noexcept {
-    return lastUpdateTime_;
-  }
+  uint32_t getLastUpdateTime() const noexcept { return lastUpdateTime_; }
   bool isValid() const noexcept { return isValid_; }
 
-  // Setter方法
   void setTemperature(float temp) noexcept { temperature_ = temp; }
   void setHumidity(float hum) noexcept { humidity_ = hum; }
   void setLastUpdateTime(uint32_t time) noexcept { lastUpdateTime_ = time; }
   void setValid(bool valid) noexcept { isValid_ = valid; }
 
-  // 更新所有数据
   void updateData(float temp, float hum, uint32_t time) noexcept {
     temperature_ = temp;
     humidity_ = hum;
@@ -97,11 +89,9 @@ class SensorData {
     isValid_ = true;
   }
 
-  // 标记数据无效
   void invalidate() noexcept { isValid_ = false; }
 };
 
-// 控制配置类
 class ControlConfig {
  private:
   float targetTemp_{25.0f};        // 目标温度
@@ -111,27 +101,17 @@ class ControlConfig {
 
  public:
   ControlConfig() = default;
-
-  // 使用统一初始化
   ControlConfig(float temp, float humidity, float tempTol, float humTol)
       : targetTemp_{temp},
         targetHumidity_{humidity},
         tempTolerance_{tempTol},
         humidityTolerance_{humTol} {}
 
-  // Getter方法（const正确性）
   float getTargetTemp() const noexcept { return targetTemp_; }
-  float getTargetHumidity() const noexcept {
-    return targetHumidity_;
-  }
-  float getTempTolerance() const noexcept {
-    return tempTolerance_;
-  }
-  float getHumidityTolerance() const noexcept {
-    return humidityTolerance_;
-  }
+  float getTargetHumidity() const noexcept { return targetHumidity_; }
+  float getTempTolerance() const noexcept { return tempTolerance_; }
+  float getHumidityTolerance() const noexcept { return humidityTolerance_; }
 
-  // Setter方法（范围检查）
   void setTargetTemp(float temp) noexcept {
     if (temp >= -40.0f && temp <= 80.0f) {
       targetTemp_ = temp;
@@ -157,7 +137,7 @@ class ControlConfig {
   }
 };
 
-// 全局变量声明（使用extern）
+// 全局变量
 extern SensorData g_sensorData;
 extern ControlConfig g_controlConfig;
 

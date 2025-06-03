@@ -12,36 +12,27 @@
 
 #include "RelayControl.h"
 
-// 命名空间别名
 namespace RC = ReptileController;
 
-// 全局实例声明
 extern RC::SensorData g_sensorData;
 extern RC::ControlConfig g_controlConfig;
-
 namespace ReptileController::Control {
 
-// 温控器全局实例
 std::unique_ptr<TemperatureController> g_controller = nullptr;
 
-// 温控器构造函数
 TemperatureController::TemperatureController()
     : tempPID_(std::make_unique<PIDController<float>>(2.0f, 0.5f, 0.1f)),
       humidityPID_(std::make_unique<PIDController<float>>(1.5f, 0.3f, 0.05f)),
       state_(std::make_unique<State>()),
       relayController_(&Relay::g_controller) {
-  // 设置PID输出限制
   tempPID_->setOutputLimits(-100.0f, 100.0f);
   humidityPID_->setOutputLimits(-100.0f, 100.0f);
-
-  // 设置积分限幅
   tempPID_->setIntegralLimit(50.0f);
   humidityPID_->setIntegralLimit(50.0f);
 }
 
 void TemperatureController::initialize() noexcept {
   if (!relayController_) return;
-  
   relayController_->initialize();
   state_->setMode(Mode::AUTO);
   state_->setLastControlTime(HAL_GetTick());
@@ -50,15 +41,10 @@ void TemperatureController::initialize() noexcept {
 void TemperatureController::update(const RC::SensorData& sensorData,
                                    const RC::ControlConfig& config) noexcept {
   if (!sensorData.isValid() || !state_) return;
-  
   const uint32_t currentTime = HAL_GetTick();
   const uint32_t deltaTime = currentTime - state_->getLastControlTime();
-  
-  // 至少间隔1秒才执行控制
   if (deltaTime < 1000) return;
-  
   state_->setLastControlTime(currentTime);
-  
   switch (state_->getMode()) {
     case Mode::AUTO:
       executeAutoMode(sensorData, config);
@@ -67,14 +53,11 @@ void TemperatureController::update(const RC::SensorData& sensorData,
       executeManualMode();
       break;
     case Mode::OFF:
-      // 关闭所有设备
       if (relayController_) {
         relayController_->turnOffAll();
       }
       break;
   }
-  
-  // 执行安全检查
   if (relayController_) {
     relayController_->safetyCheck();
   }
@@ -89,42 +72,34 @@ void TemperatureController::executeAutoMode(
   const float targetHumidity = config.getTargetHumidity();
   const float tempTolerance = config.getTempTolerance();
   const float humidityTolerance = config.getHumidityTolerance();
-  
+
   executeTemperatureControl(currentTemp, targetTemp, tempTolerance);
   executeHumidityControl(currentHumidity, targetHumidity, humidityTolerance);
 }
 
-void TemperatureController::executeManualMode() noexcept {
-  // 手动模式下不自动控制，保持当前状态
-  // 可以通过其他接口手动控制继电器
-}
+void TemperatureController::executeManualMode() noexcept {}
 
 void TemperatureController::executeTemperatureControl(
     float currentTemp, float targetTemp, float tolerance) noexcept {
   if (!tempPID_ || !relayController_ || !state_) return;
-  
+
   const float tempError = targetTemp - currentTemp;
-  const float deltaTime = 1.0f;  // 1秒间隔
-  
-  // 使用PID控制器计算输出
+  const float deltaTime = 1.0f;
+
   const float pidOutput = tempPID_->update(targetTemp, currentTemp, deltaTime);
   state_->setTempOutput(pidOutput);
-  
-  // 简单的温度控制逻辑
+
   if (tempError > tolerance) {
-    // 温度太低，需要加热
     relayController_->setState(Relay::Type::HEATER, Relay::State::ON);
     relayController_->setState(Relay::Type::FAN, Relay::State::OFF);
     state_->setHeaterEnabled(true);
     state_->setFanEnabled(false);
   } else if (tempError < -tolerance) {
-    // 温度太高，需要降温
     relayController_->setState(Relay::Type::HEATER, Relay::State::OFF);
     relayController_->setState(Relay::Type::FAN, Relay::State::ON);
     state_->setHeaterEnabled(false);
     state_->setFanEnabled(true);
   } else {
-    // 温度在目标范围内
     relayController_->setState(Relay::Type::HEATER, Relay::State::OFF);
     relayController_->setState(Relay::Type::FAN, Relay::State::OFF);
     state_->setHeaterEnabled(false);
@@ -136,21 +111,18 @@ void TemperatureController::executeHumidityControl(float currentHumidity,
                                                    float targetHumidity,
                                                    float tolerance) noexcept {
   if (!humidityPID_ || !relayController_ || !state_) return;
-  
+
   const float humidityError = targetHumidity - currentHumidity;
-  const float deltaTime = 1.0f;  // 1秒间隔
-  
-  // 使用PID控制器计算输出
-  const float pidOutput = humidityPID_->update(targetHumidity, currentHumidity, deltaTime);
+  const float deltaTime = 1.0f;
+
+  const float pidOutput =
+      humidityPID_->update(targetHumidity, currentHumidity, deltaTime);
   state_->setHumidityOutput(pidOutput);
-  
-  // 简单的湿度控制逻辑
+
   if (humidityError > tolerance) {
-    // 湿度太低，需要加湿
     relayController_->setState(Relay::Type::HUMIDIFIER, Relay::State::ON);
     state_->setHumidifierEnabled(true);
   } else {
-    // 湿度合适或太高，关闭加湿器
     relayController_->setState(Relay::Type::HUMIDIFIER, Relay::State::OFF);
     state_->setHumidifierEnabled(false);
   }
@@ -167,7 +139,7 @@ Mode TemperatureController::getMode() const noexcept {
 }
 
 void TemperatureController::setTemperaturePIDParameters(float kp, float ki,
-                                                 float kd) noexcept {
+                                                        float kd) noexcept {
   if (tempPID_) {
     tempPID_->setParameters(kp, ki, kd);
   }
@@ -182,12 +154,12 @@ void TemperatureController::setHumidityPIDParameters(float kp, float ki,
 
 void TemperatureController::setTargetTemperature(float temperature) noexcept {
   g_controlConfig.setTargetTemp(temperature);
-  tempPID_->reset();  // 重置PID以避免积分饱和
+  tempPID_->reset();
 }
 
 void TemperatureController::setTargetHumidity(float humidity) noexcept {
   g_controlConfig.setTargetHumidity(humidity);
-  humidityPID_->reset();  // 重置PID以避免积分饱和
+  humidityPID_->reset();
 }
 
 void TemperatureController::setTolerances(float tempTolerance,
@@ -207,15 +179,12 @@ void TemperatureController::emergencyStop() noexcept {
 
 bool TemperatureController::safetyCheck() const noexcept {
   if (!relayController_) return false;
-  
-  // 检查继电器控制器是否正常
   return relayController_->isInitialized();
 }
 
 }  // namespace ReptileController::Control
 
-// 简单的clamp函数实现（在extern C块外面）
-template<typename T>
+template <typename T>
 static T clamp(const T& value, const T& min, const T& max) {
   return (value < min) ? min : (value > max) ? max : value;
 }
@@ -274,7 +243,8 @@ static RC::SensorData convertToModernSensorData(const SensorData_t* legacy) {
   return modern;
 }
 
-static RC::ControlConfig convertToModernControlConfig(const ControlConfig_t* legacy) {
+static RC::ControlConfig convertToModernControlConfig(
+    const ControlConfig_t* legacy) {
   RC::ControlConfig modern;
   if (legacy) {
     modern.setTargetTemp(legacy->targetTemperature);
