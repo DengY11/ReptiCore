@@ -34,7 +34,7 @@ TIM_HandleTypeDef htim2;
 namespace RC = ReptileController;
 RC::SensorData g_sensorData;
 RC::ControlConfig g_controlConfig{30.0f, 40.0f, 2.0f, 8.0f};  // 猪鼻蛇配置
-SemaphoreHandle_t sensorDataMutex = nullptr;
+SemaphoreHandle_t sensorDataMutex = nullptr;//g_sensorsData被三个任务同时访问，使用互斥量保护
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
