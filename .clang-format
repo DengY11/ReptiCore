@@ -1,0 +1,47 @@
+# Google代码风格的clang-format配置
+# 适用于STM32F407爬宠温湿度控制系统
+
+BasedOnStyle: Google
+
+# 语言设置
+Language: Cpp
+
+# 缩进设置
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+
+# 列宽设置
+ColumnLimit: 80
+
+# 访问修饰符缩进
+AccessModifierOffset: -1
+
+# 对齐设置
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignTrailingComments: true
+
+# 换行设置
+AllowShortBlocksOnASingleLine: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: true
+
+# 括号设置
+BreakBeforeBraces: Attach
+
+# 空格设置
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 2
+
+# 指针对齐
+PointerAlignment: Left
+
+# 排序设置
+SortIncludes: true
+
+# C++11特性
+Cpp11BracedListStyle: true
+
+# 命名空间设置
+NamespaceIndentation: None 

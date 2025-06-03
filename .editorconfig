@@ -1,0 +1,61 @@
+# EditorConfig配置文件
+# STM32F407爬宠温湿度控制系统
+# 配合.clang-format使用Google代码风格
+
+root = true
+
+# 所有文件的通用设置
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# C/C++源文件
+[*.{c,h,cpp,hpp,cc,cxx}]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+max_line_length = 80
+
+# CMake文件
+[CMakeLists.txt,*.cmake]
+indent_style = space
+indent_size = 2
+
+# Python文件
+[*.py]
+indent_style = space
+indent_size = 4
+
+# JSON文件
+[*.json]
+indent_style = space
+indent_size = 2
+
+# YAML文件
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Markdown文件
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# 批处理文件
+[*.{bat,cmd}]
+end_of_line = crlf
+
+# Shell脚本
+[*.sh]
+end_of_line = lf
+
+# PlatformIO配置文件
+[platformio.ini]
+indent_style = space
+indent_size = 2
+
+# 汇编文件
+[*.{s,S,asm}]
+indent_style = space
+indent_size = 4 
