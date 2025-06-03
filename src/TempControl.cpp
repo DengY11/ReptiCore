@@ -1,7 +1,7 @@
 /*
  * 温湿度智能控制算法实现
  * TempControl.cpp
- * 现代C++风格重构版本
+ * 现代C++17风格重构版本
  */
 
 #include "TempControl.h"
@@ -15,12 +15,6 @@
 // 命名空间别名
 namespace RC = ReptileController;
 
-// 自定义clamp函数（C++14兼容）
-template <typename T>
-constexpr const T& clamp(const T& value, const T& min, const T& max) {
-  return (value < min) ? min : (value > max) ? max : value;
-}
-
 // 全局实例声明
 extern RC::SensorData g_sensorData;
 extern RC::ControlConfig g_controlConfig;
@@ -32,8 +26,8 @@ std::unique_ptr<TemperatureController> g_controller = nullptr;
 
 // 温控器构造函数
 TemperatureController::TemperatureController()
-    : tempPID_(std::make_unique<PIDController<float>>(2.0f, 0.1f, 0.5f)),
-      humidityPID_(std::make_unique<PIDController<float>>(1.5f, 0.05f, 0.3f)),
+    : tempPID_(std::make_unique<PIDController<float>>(2.0f, 0.5f, 0.1f)),
+      humidityPID_(std::make_unique<PIDController<float>>(1.5f, 0.3f, 0.05f)),
       state_(std::make_unique<State>()),
       relayController_(&Relay::g_controller) {
   // 设置PID输出限制
@@ -46,193 +40,144 @@ TemperatureController::TemperatureController()
 }
 
 void TemperatureController::initialize() noexcept {
-  // 初始化控制状态
+  if (!relayController_) return;
+  
+  relayController_->initialize();
   state_->setMode(Mode::AUTO);
-  state_->setHeaterEnabled(false);
-  state_->setFanEnabled(false);
-  state_->setHumidifierEnabled(false);
   state_->setLastControlTime(HAL_GetTick());
-  state_->setTempOutput(0.0f);
-  state_->setHumidityOutput(0.0f);
-
-  // 重置PID控制器
-  tempPID_->reset();
-  humidityPID_->reset();
 }
 
 void TemperatureController::update(const RC::SensorData& sensorData,
                                    const RC::ControlConfig& config) noexcept {
-  if (!sensorData.isValid()) return;
-
+  if (!sensorData.isValid() || !state_) return;
+  
   const uint32_t currentTime = HAL_GetTick();
+  const uint32_t deltaTime = currentTime - state_->getLastControlTime();
+  
+  // 至少间隔1秒才执行控制
+  if (deltaTime < 1000) return;
+  
   state_->setLastControlTime(currentTime);
-
+  
   switch (state_->getMode()) {
     case Mode::AUTO:
       executeAutoMode(sensorData, config);
       break;
-
     case Mode::MANUAL:
       executeManualMode();
       break;
-
     case Mode::OFF:
       // 关闭所有设备
-      relayController_->turnOffAll();
-      state_->setHeaterEnabled(false);
-      state_->setFanEnabled(false);
-      state_->setHumidifierEnabled(false);
+      if (relayController_) {
+        relayController_->turnOffAll();
+      }
       break;
+  }
+  
+  // 执行安全检查
+  if (relayController_) {
+    relayController_->safetyCheck();
   }
 }
 
 void TemperatureController::executeAutoMode(
     const RC::SensorData& sensorData,
     const RC::ControlConfig& config) noexcept {
-  constexpr float deltaTime = 1.0f;  // 控制周期为1秒
-
-  // 获取传感器数据
   const float currentTemp = sensorData.getTemperature();
   const float currentHumidity = sensorData.getHumidity();
   const float targetTemp = config.getTargetTemp();
   const float targetHumidity = config.getTargetHumidity();
-
-  // PID控制计算
-  const float tempOutput = tempPID_->update(targetTemp, currentTemp, deltaTime);
-  const float humidityOutput =
-      humidityPID_->update(targetHumidity, currentHumidity, deltaTime);
-
-  // 更新输出值
-  state_->setTempOutput(tempOutput);
-  state_->setHumidityOutput(humidityOutput);
-
-  // 执行控制逻辑
-  executeTemperatureControl(currentTemp, targetTemp, config.getTempTolerance());
-  executeHumidityControl(currentHumidity, targetHumidity,
-                         config.getHumidityTolerance());
+  const float tempTolerance = config.getTempTolerance();
+  const float humidityTolerance = config.getHumidityTolerance();
+  
+  executeTemperatureControl(currentTemp, targetTemp, tempTolerance);
+  executeHumidityControl(currentHumidity, targetHumidity, humidityTolerance);
 }
 
 void TemperatureController::executeManualMode() noexcept {
-  // 手动模式下，只更新状态记录
-  using RelayType = Relay::Type;
-  using RelayState = Relay::State;
-
-  state_->setHeaterEnabled(relayController_->getState(RelayType::HEATER) ==
-                           RelayState::ON);
-  state_->setFanEnabled(relayController_->getState(RelayType::FAN) ==
-                        RelayState::ON);
-  state_->setHumidifierEnabled(
-      relayController_->getState(RelayType::HUMIDIFIER) == RelayState::ON);
+  // 手动模式下不自动控制，保持当前状态
+  // 可以通过其他接口手动控制继电器
 }
 
 void TemperatureController::executeTemperatureControl(
     float currentTemp, float targetTemp, float tolerance) noexcept {
-  using RelayType = Relay::Type;
-  using RelayState = Relay::State;
-
-  const float tempDiff = targetTemp - currentTemp;
-
-  // 温度过低，启动加热器
-  if (tempDiff > tolerance) {
-    if (!state_->isHeaterEnabled()) {
-      relayController_->setState(RelayType::HEATER, RelayState::ON);
-      state_->setHeaterEnabled(true);
-    }
-
-    // 如果温度差异很大，也启动风扇增强对流
-    if (tempDiff > 2.0f * tolerance && !state_->isFanEnabled()) {
-      relayController_->setState(RelayType::FAN, RelayState::ON);
-      state_->setFanEnabled(true);
-    }
-  }
-  // 温度过高，关闭加热器，启动风扇散热
-  else if (tempDiff < -tolerance) {
-    if (state_->isHeaterEnabled()) {
-      relayController_->setState(RelayType::HEATER, RelayState::OFF);
-      state_->setHeaterEnabled(false);
-    }
-
-    if (!state_->isFanEnabled()) {
-      relayController_->setState(RelayType::FAN, RelayState::ON);
-      state_->setFanEnabled(true);
-    }
-  }
-  // 温度在正常范围内
-  else {
-    // 温度接近目标值，关闭加热器
-    if (state_->isHeaterEnabled() && tempDiff < tolerance / 2.0f) {
-      relayController_->setState(RelayType::HEATER, RelayState::OFF);
-      state_->setHeaterEnabled(false);
-    }
-
-    // 温度稳定，关闭风扇
-    if (state_->isFanEnabled() && std::fabs(tempDiff) < tolerance / 2.0f) {
-      relayController_->setState(RelayType::FAN, RelayState::OFF);
-      state_->setFanEnabled(false);
-    }
+  if (!tempPID_ || !relayController_ || !state_) return;
+  
+  const float tempError = targetTemp - currentTemp;
+  const float deltaTime = 1.0f;  // 1秒间隔
+  
+  // 使用PID控制器计算输出
+  const float pidOutput = tempPID_->update(targetTemp, currentTemp, deltaTime);
+  state_->setTempOutput(pidOutput);
+  
+  // 简单的温度控制逻辑
+  if (tempError > tolerance) {
+    // 温度太低，需要加热
+    relayController_->setState(Relay::Type::HEATER, Relay::State::ON);
+    relayController_->setState(Relay::Type::FAN, Relay::State::OFF);
+    state_->setHeaterEnabled(true);
+    state_->setFanEnabled(false);
+  } else if (tempError < -tolerance) {
+    // 温度太高，需要降温
+    relayController_->setState(Relay::Type::HEATER, Relay::State::OFF);
+    relayController_->setState(Relay::Type::FAN, Relay::State::ON);
+    state_->setHeaterEnabled(false);
+    state_->setFanEnabled(true);
+  } else {
+    // 温度在目标范围内
+    relayController_->setState(Relay::Type::HEATER, Relay::State::OFF);
+    relayController_->setState(Relay::Type::FAN, Relay::State::OFF);
+    state_->setHeaterEnabled(false);
+    state_->setFanEnabled(false);
   }
 }
 
 void TemperatureController::executeHumidityControl(float currentHumidity,
                                                    float targetHumidity,
                                                    float tolerance) noexcept {
-  using RelayType = Relay::Type;
-  using RelayState = Relay::State;
-
-  const float humidityDiff = targetHumidity - currentHumidity;
-
-  // 湿度过低，启动雾化器
-  if (humidityDiff > tolerance) {
-    if (!state_->isHumidifierEnabled()) {
-      relayController_->setState(RelayType::HUMIDIFIER, RelayState::ON);
-      state_->setHumidifierEnabled(true);
-    }
-  }
-  // 湿度过高，关闭雾化器，启动风扇除湿
-  else if (humidityDiff < -tolerance) {
-    if (state_->isHumidifierEnabled()) {
-      relayController_->setState(RelayType::HUMIDIFIER, RelayState::OFF);
-      state_->setHumidifierEnabled(false);
-    }
-
-    // 湿度过高时启动风扇帮助除湿
-    if (humidityDiff < -2.0f * tolerance && !state_->isFanEnabled()) {
-      relayController_->setState(RelayType::FAN, RelayState::ON);
-      state_->setFanEnabled(true);
-    }
-  }
-  // 湿度在正常范围内
-  else {
-    // 湿度接近目标值，关闭雾化器
-    if (state_->isHumidifierEnabled() && humidityDiff < tolerance / 2.0f) {
-      relayController_->setState(RelayType::HUMIDIFIER, RelayState::OFF);
-      state_->setHumidifierEnabled(false);
-    }
+  if (!humidityPID_ || !relayController_ || !state_) return;
+  
+  const float humidityError = targetHumidity - currentHumidity;
+  const float deltaTime = 1.0f;  // 1秒间隔
+  
+  // 使用PID控制器计算输出
+  const float pidOutput = humidityPID_->update(targetHumidity, currentHumidity, deltaTime);
+  state_->setHumidityOutput(pidOutput);
+  
+  // 简单的湿度控制逻辑
+  if (humidityError > tolerance) {
+    // 湿度太低，需要加湿
+    relayController_->setState(Relay::Type::HUMIDIFIER, Relay::State::ON);
+    state_->setHumidifierEnabled(true);
+  } else {
+    // 湿度合适或太高，关闭加湿器
+    relayController_->setState(Relay::Type::HUMIDIFIER, Relay::State::OFF);
+    state_->setHumidifierEnabled(false);
   }
 }
 
 void TemperatureController::setMode(Mode mode) noexcept {
-  state_->setMode(mode);
-
-  if (mode == Mode::OFF) {
-    relayController_->turnOffAll();
-    tempPID_->reset();
-    humidityPID_->reset();
+  if (state_) {
+    state_->setMode(mode);
   }
 }
 
 Mode TemperatureController::getMode() const noexcept {
-  return state_->getMode();
+  return state_ ? state_->getMode() : Mode::OFF;
 }
 
-void TemperatureController::setTempPIDParameters(float kp, float ki,
+void TemperatureController::setTemperaturePIDParameters(float kp, float ki,
                                                  float kd) noexcept {
-  tempPID_->setParameters(kp, ki, kd);
+  if (tempPID_) {
+    tempPID_->setParameters(kp, ki, kd);
+  }
 }
 
 void TemperatureController::setHumidityPIDParameters(float kp, float ki,
                                                      float kd) noexcept {
-  humidityPID_->setParameters(kp, ki, kd);
+  if (humidityPID_) {
+    humidityPID_->setParameters(kp, ki, kd);
+  }
 }
 
 void TemperatureController::setTargetTemperature(float temperature) noexcept {
@@ -252,21 +197,30 @@ void TemperatureController::setTolerances(float tempTolerance,
 }
 
 void TemperatureController::emergencyStop() noexcept {
-  // 直接关闭所有继电器
-  relayController_->turnOffAll();
-  state_->setHeaterEnabled(false);
-  state_->setFanEnabled(false);
-  state_->setHumidifierEnabled(false);
-  state_->setMode(Mode::OFF);
+  if (relayController_) {
+    relayController_->emergencyStop();
+  }
+  if (state_) {
+    state_->setMode(Mode::OFF);
+  }
+}
+
+bool TemperatureController::safetyCheck() const noexcept {
+  if (!relayController_) return false;
+  
+  // 检查继电器控制器是否正常
+  return relayController_->isInitialized();
 }
 
 }  // namespace ReptileController::Control
 
-extern "C" {
+// 简单的clamp函数实现（在extern C块外面）
+template<typename T>
+static T clamp(const T& value, const T& min, const T& max) {
+  return (value < min) ? min : (value > max) ? max : value;
+}
 
-// 兼容旧代码的类型别名
-typedef RC::SensorData SensorData_t;
-typedef RC::ControlConfig ControlConfig_t;
+extern "C" {
 
 // 控制状态变量（兼容性）
 static ControlState_t legacyControlState = {.mode = CONTROL_MODE_AUTO,
@@ -308,6 +262,29 @@ static ControlMode_t convertToLegacyMode(RC::Control::Mode modern) {
   }
 }
 
+// 转换C结构体到C++类
+static RC::SensorData convertToModernSensorData(const SensorData_t* legacy) {
+  RC::SensorData modern;
+  if (legacy) {
+    modern.updateData(legacy->temperature, legacy->humidity, legacy->timestamp);
+    if (!legacy->valid) {
+      modern.invalidate();
+    }
+  }
+  return modern;
+}
+
+static RC::ControlConfig convertToModernControlConfig(const ControlConfig_t* legacy) {
+  RC::ControlConfig modern;
+  if (legacy) {
+    modern.setTargetTemp(legacy->targetTemperature);
+    modern.setTargetHumidity(legacy->targetHumidity);
+    modern.setTempTolerance(legacy->tempTolerance);
+    modern.setHumidityTolerance(legacy->humidityTolerance);
+  }
+  return modern;
+}
+
 static void updateLegacyState() {
   if (!RC::Control::g_controller) return;
 
@@ -330,8 +307,8 @@ void TempControl_Init(void) {
   RC::Control::g_controller->initialize();
 
   // 初始化兼容PID结构
-  PID_Init(&legacyTempPID, 2.0f, 0.1f, 0.5f);
-  PID_Init(&legacyHumidityPID, 1.5f, 0.05f, 0.3f);
+  PID_Init(&legacyTempPID, 2.0f, 0.5f, 0.1f);
+  PID_Init(&legacyHumidityPID, 1.5f, 0.3f, 0.05f);
 
   updateLegacyState();
 }
@@ -339,8 +316,12 @@ void TempControl_Init(void) {
 void TempControl_Update(SensorData_t* sensorData, ControlConfig_t* config) {
   if (!sensorData || !config || !RC::Control::g_controller) return;
 
+  // 转换C结构体到C++类
+  auto modernSensorData = convertToModernSensorData(sensorData);
+  auto modernConfig = convertToModernControlConfig(config);
+
   // 使用现代C++接口
-  RC::Control::g_controller->update(*sensorData, *config);
+  RC::Control::g_controller->update(modernSensorData, modernConfig);
   updateLegacyState();
 }
 
@@ -421,9 +402,13 @@ void TempControl_HumidityControl(float currentHumidity, float targetHumidity,
 void TempControl_AutoMode(SensorData_t* sensorData, ControlConfig_t* config) {
   if (!sensorData || !config || !RC::Control::g_controller) return;
 
+  // 转换C结构体到C++类
+  auto modernSensorData = convertToModernSensorData(sensorData);
+  auto modernConfig = convertToModernControlConfig(config);
+
   // 设置为自动模式并更新
   RC::Control::g_controller->setMode(RC::Control::Mode::AUTO);
-  RC::Control::g_controller->update(*sensorData, *config);
+  RC::Control::g_controller->update(modernSensorData, modernConfig);
 }
 
 void TempControl_ManualMode(void) {

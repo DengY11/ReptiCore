@@ -6,14 +6,7 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "main.h"
-
-#ifdef __cplusplus
-}
 
 #include <cstdint>
 #include <utility>
@@ -109,6 +102,8 @@ extern Sensor g_sensor;
 
 }  // namespace ReptileController::DHT22
 
+// C接口部分
+#ifdef __cplusplus
 extern "C" {
 #endif
 

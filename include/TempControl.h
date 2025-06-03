@@ -6,15 +6,8 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "RelayControl.h"
 #include "main.h"
-
-#ifdef __cplusplus
-}
 
 #include <algorithm>
 #include <chrono>
@@ -73,8 +66,8 @@ class PIDController {
   // 设置积分限幅
   void setIntegralLimit(T limit) noexcept { maxIntegral_ = limit; }
 
-  // 更新PID控制器
-  [[nodiscard]] T update(T setpoint, T measurement, T deltaTime) noexcept {
+  // 更新PID控制器（移除nodiscard以兼容C++14）
+  T update(T setpoint, T measurement, T deltaTime) noexcept {
     const T error = setpoint - measurement;
 
     // 比例项
@@ -103,11 +96,11 @@ class PIDController {
   }
 
   // Getter方法
-  [[nodiscard]] constexpr T getKp() const noexcept { return kp_; }
-  [[nodiscard]] constexpr T getKi() const noexcept { return ki_; }
-  [[nodiscard]] constexpr T getKd() const noexcept { return kd_; }
-  [[nodiscard]] constexpr T getIntegral() const noexcept { return integral_; }
-  [[nodiscard]] constexpr T getLastError() const noexcept { return lastError_; }
+  constexpr T getKp() const noexcept { return kp_; }
+  constexpr T getKi() const noexcept { return ki_; }
+  constexpr T getKd() const noexcept { return kd_; }
+  constexpr T getIntegral() const noexcept { return integral_; }
+  constexpr T getLastError() const noexcept { return lastError_; }
 };
 
 // 控制状态类
@@ -125,17 +118,17 @@ class State {
   State() = default;
 
   // Getter方法（const正确性）
-  [[nodiscard]] Mode getMode() const noexcept { return mode_; }
-  [[nodiscard]] bool isHeaterEnabled() const noexcept { return heaterEnabled_; }
-  [[nodiscard]] bool isFanEnabled() const noexcept { return fanEnabled_; }
-  [[nodiscard]] bool isHumidifierEnabled() const noexcept {
+  Mode getMode() const noexcept { return mode_; }
+  bool isHeaterEnabled() const noexcept { return heaterEnabled_; }
+  bool isFanEnabled() const noexcept { return fanEnabled_; }
+  bool isHumidifierEnabled() const noexcept {
     return humidifierEnabled_;
   }
-  [[nodiscard]] uint32_t getLastControlTime() const noexcept {
+  uint32_t getLastControlTime() const noexcept {
     return lastControlTime_;
   }
-  [[nodiscard]] float getTempOutput() const noexcept { return tempOutput_; }
-  [[nodiscard]] float getHumidityOutput() const noexcept {
+  float getTempOutput() const noexcept { return tempOutput_; }
+  float getHumidityOutput() const noexcept {
     return humidityOutput_;
   }
 
@@ -192,39 +185,45 @@ class TemperatureController {
 
   // 模式控制
   void setMode(Mode mode) noexcept;
-  [[nodiscard]] Mode getMode() const noexcept;
+  Mode getMode() const noexcept;
 
   // 获取控制状态
-  [[nodiscard]] const State& getState() const noexcept { return *state_; }
+  const State& getState() const noexcept { return *state_; }
 
   // PID参数调整
-  void setTempPIDParameters(float kp, float ki, float kd) noexcept;
+  void setTemperaturePIDParameters(float kp, float ki, float kd) noexcept;
   void setHumidityPIDParameters(float kp, float ki, float kd) noexcept;
 
-  // 配置目标值
+  // 目标值设置
   void setTargetTemperature(float temperature) noexcept;
   void setTargetHumidity(float humidity) noexcept;
   void setTolerances(float tempTolerance, float humidityTolerance) noexcept;
 
   // 紧急停止
   void emergencyStop() noexcept;
+
+  // 安全检查
+  bool safetyCheck() const noexcept;
 };
 
-// 全局温控器实例
+// 全局控制器实例
 extern std::unique_ptr<TemperatureController> g_controller;
 
 }  // namespace ReptileController::Control
 
+// C接口部分
+#ifdef __cplusplus
 extern "C" {
 #endif
 
-// C风格接口（为了兼容性）
+// 控制模式枚举（C风格）
 typedef enum {
   CONTROL_MODE_AUTO = 0,
   CONTROL_MODE_MANUAL,
   CONTROL_MODE_OFF
 } ControlMode_t;
 
+// PID控制器结构体（C风格）
 typedef struct {
   float Kp;
   float Ki;
@@ -236,6 +235,7 @@ typedef struct {
   float outputMin;
 } PID_t;
 
+// 控制状态结构体（C风格）
 typedef struct {
   ControlMode_t mode;
   bool heaterEnabled;
@@ -246,19 +246,35 @@ typedef struct {
   float humidityOutput;
 } ControlState_t;
 
-// C函数声明
+// 传感器数据结构体（C风格）
+typedef struct SensorData {
+  float temperature;
+  float humidity;
+  uint32_t timestamp;
+  bool valid;
+} SensorData_t;
+
+// 控制配置结构体（C风格）
+typedef struct ControlConfig {
+  float targetTemperature;
+  float targetHumidity;
+  float tempTolerance;
+  float humidityTolerance;
+} ControlConfig_t;
+
+// C接口函数声明
 void TempControl_Init(void);
 void TempControl_Update(SensorData_t* sensorData, ControlConfig_t* config);
 void TempControl_SetMode(ControlMode_t mode);
 ControlMode_t TempControl_GetMode(void);
 ControlState_t TempControl_GetState(void);
 
-// PID控制函数
+// PID控制器C接口
 void PID_Init(PID_t* pid, float kp, float ki, float kd);
 float PID_Update(PID_t* pid, float setpoint, float measurement, float dt);
 void PID_Reset(PID_t* pid);
 
-// 控制算法函数
+// 内部函数声明
 void TempControl_TemperatureControl(float currentTemp, float targetTemp,
                                     float tolerance);
 void TempControl_HumidityControl(float currentHumidity, float targetHumidity,
@@ -266,7 +282,7 @@ void TempControl_HumidityControl(float currentHumidity, float targetHumidity,
 void TempControl_AutoMode(SensorData_t* sensorData, ControlConfig_t* config);
 void TempControl_ManualMode(void);
 
-// 配置函数
+// 参数设置
 void TempControl_SetTargetTemperature(float temperature);
 void TempControl_SetTargetHumidity(float humidity);
 void TempControl_SetTolerance(float tempTolerance, float humidityTolerance);

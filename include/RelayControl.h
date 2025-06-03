@@ -6,14 +6,7 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "main.h"
-
-#ifdef __cplusplus
-}
 
 #include <array>
 #include <bitset>
@@ -50,28 +43,28 @@ class Controller {
  private:
   static constexpr size_t RELAY_COUNT = static_cast<size_t>(Type::COUNT);
 
-  // 继电器配置数组
-  static constexpr std::array<Config, RELAY_COUNT> configs_ = {
-      {{ReptileController::Pins::Relay::HEATER_PORT,
-        ReptileController::Pins::Relay::HEATER_PIN, false},
-       {ReptileController::Pins::Relay::FAN_PORT,
-        ReptileController::Pins::Relay::FAN_PIN, false},
-       {ReptileController::Pins::Relay::HUMIDIFIER_PORT,
-        ReptileController::Pins::Relay::HUMIDIFIER_PIN, false}}};
+  // 继电器配置数组（运行时初始化）
+  std::array<Config, RELAY_COUNT> configs_;
 
   // 继电器状态位集
   std::bitset<RELAY_COUNT> relayStates_{};
   bool initialized_{false};
 
-  // 私有方法
-  [[nodiscard]] bool isValidType(Type type) const noexcept {
+  // 私有方法（移除nodiscard以兼容C++14）
+  bool isValidType(Type type) const noexcept {
     return static_cast<size_t>(type) < RELAY_COUNT;
   }
 
   void setPhysicalState(Type type, State state) const noexcept;
 
  public:
-  Controller() = default;
+  Controller() : configs_{{{ReptileController::Pins::Relay::HEATER_PORT,
+                            ReptileController::Pins::Relay::HEATER_PIN, false},
+                           {ReptileController::Pins::Relay::FAN_PORT,
+                            ReptileController::Pins::Relay::FAN_PIN, false},
+                           {ReptileController::Pins::Relay::HUMIDIFIER_PORT,
+                            ReptileController::Pins::Relay::HUMIDIFIER_PIN, false}}} {}
+  
   ~Controller() = default;
 
   // 禁用拷贝构造和赋值（控制器是唯一的）
@@ -89,7 +82,7 @@ class Controller {
   void setState(Type type, State state) noexcept;
 
   // 获取继电器状态
-  [[nodiscard]] State getState(Type type) const noexcept;
+  State getState(Type type) const noexcept;
 
   // 切换继电器状态
   void toggleState(Type type) noexcept;
@@ -98,15 +91,15 @@ class Controller {
   void turnOffAll() noexcept;
 
   // 获取所有继电器状态
-  [[nodiscard]] std::bitset<RELAY_COUNT> getAllStates() const noexcept {
+  std::bitset<RELAY_COUNT> getAllStates() const noexcept {
     return relayStates_;
   }
 
   // 检查是否已初始化
-  [[nodiscard]] bool isInitialized() const noexcept { return initialized_; }
+  bool isInitialized() const noexcept { return initialized_; }
 
   // 获取继电器配置
-  [[nodiscard]] static constexpr const Config& getConfig(Type type) noexcept {
+  const Config& getConfig(Type type) const noexcept {
     return configs_[static_cast<size_t>(type)];
   }
 
@@ -122,6 +115,8 @@ extern Controller g_controller;
 
 }  // namespace ReptileController::Relay
 
+// C接口部分
+#ifdef __cplusplus
 extern "C" {
 #endif
 

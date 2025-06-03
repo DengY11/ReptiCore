@@ -1,13 +1,12 @@
 /*
  * 继电器控制模块实现
  * RelayControl.cpp
- * 现代C++风格重构版本
+ * 现代C++17风格重构版本
  */
 
 #include "RelayControl.h"
 
-#include <chrono>
-#include <memory>
+#include <algorithm>
 
 namespace ReptileController::Relay {
 
@@ -16,45 +15,42 @@ Controller g_controller;
 
 // 继电器控制器实现
 void Controller::initialize() noexcept {
+  if (initialized_) return;
+  
   // 初始化所有继电器为关闭状态
   turnOffAll();
-
-  // 初始化GPIO配置
-  for (size_t i = 0; i < RELAY_COUNT; ++i) {
-    const auto& config = configs_[i];
-
-    // 设置初始状态
-    HAL_GPIO_WritePin(config.port, config.pin,
-                      config.activeLevel ? GPIO_PIN_RESET : GPIO_PIN_SET);
-  }
-
   initialized_ = true;
 }
 
+void Controller::setPhysicalState(Type type, State state) const noexcept {
+  if (!isValidType(type)) return;
+  
+  const auto& config = configs_[static_cast<size_t>(type)];
+  GPIO_PinState pinState = (state == State::ON) ? 
+    (config.activeLevel ? GPIO_PIN_SET : GPIO_PIN_RESET) :
+    (config.activeLevel ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    
+  HAL_GPIO_WritePin(config.port, config.pin, pinState);
+}
+
 void Controller::setState(Type type, State state) noexcept {
-  if (!isValidType(type) || !initialized_) return;
-
+  if (!initialized_ || !isValidType(type)) return;
+  
   const size_t index = static_cast<size_t>(type);
-  const bool isOn = (state == State::ON);
-
-  // 更新状态位集
-  relayStates_[index] = isOn;
-
-  // 设置物理状态
+  relayStates_[index] = (state == State::ON);
   setPhysicalState(type, state);
-
-  // 执行安全检查
-  safetyCheck();
 }
 
 State Controller::getState(Type type) const noexcept {
   if (!isValidType(type)) return State::OFF;
-
+  
   const size_t index = static_cast<size_t>(type);
   return relayStates_[index] ? State::ON : State::OFF;
 }
 
 void Controller::toggleState(Type type) noexcept {
+  if (!initialized_ || !isValidType(type)) return;
+  
   const State currentState = getState(type);
   const State newState = (currentState == State::ON) ? State::OFF : State::ON;
   setState(type, newState);
@@ -62,178 +58,91 @@ void Controller::toggleState(Type type) noexcept {
 
 void Controller::turnOffAll() noexcept {
   for (size_t i = 0; i < RELAY_COUNT; ++i) {
-    setState(static_cast<Type>(i), State::OFF);
+    const Type type = static_cast<Type>(i);
+    setPhysicalState(type, State::OFF);
+    relayStates_[i] = false;
   }
-}
-
-void Controller::setPhysicalState(Type type, State state) const noexcept {
-  if (!isValidType(type)) return;
-
-  const size_t index = static_cast<size_t>(type);
-  const auto& config = configs_[index];
-
-  // 根据activeLevel决定GPIO状态
-  GPIO_PinState pinState;
-  if (config.activeLevel) {
-    // 高电平有效
-    pinState = (state == State::ON) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-  } else {
-    // 低电平有效
-    pinState = (state == State::ON) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-  }
-
-  HAL_GPIO_WritePin(config.port, config.pin, pinState);
 }
 
 void Controller::safetyCheck() noexcept {
-  static uint32_t lastCheck = 0;
-  static uint32_t heatFanStartTime = 0;
-  static bool cooldownActive = false;
-  static uint32_t cooldownStartTime = 0;
-
+  // 实现安全检查逻辑
+  static uint32_t lastCheckTime = 0;
   const uint32_t currentTime = HAL_GetTick();
-
+  
   // 每秒检查一次
-  if (currentTime - lastCheck < 1000) {
-    return;
-  }
-  lastCheck = currentTime;
-
-  const bool heaterOn = getState(Type::HEATER) == State::ON;
-  const bool fanOn = getState(Type::FAN) == State::ON;
-
-  // 如果加热器和风扇都开启超过30分钟，强制关闭加热器5分钟
-  if (heaterOn && fanOn) {
-    if (heatFanStartTime == 0) {
-      heatFanStartTime = currentTime;
-    } else if (currentTime - heatFanStartTime > 30 * 60 * 1000) {  // 30分钟
-      // 开始冷却周期
-      setState(Type::HEATER, State::OFF);
-      cooldownActive = true;
-      cooldownStartTime = currentTime;
-      heatFanStartTime = 0;
+  if (currentTime - lastCheckTime >= 1000) {
+    lastCheckTime = currentTime;
+    
+    // 检查是否有设备运行时间过长（防止过热）
+    static uint32_t heaterOnTime = 0;
+    
+    if (getState(Type::HEATER) == State::ON) {
+      heaterOnTime += 1000;  // 累加运行时间
+      
+      // 如果加热器连续运行超过30分钟，强制关闭
+      if (heaterOnTime > 30 * 60 * 1000) {
+        setState(Type::HEATER, State::OFF);
+        setState(Type::FAN, State::ON);  // 开启风扇散热
+        heaterOnTime = 0;
+      }
+    } else {
+      heaterOnTime = 0;  // 重置计时器
     }
-  } else {
-    heatFanStartTime = 0;
-  }
-
-  // 冷却周期管理
-  if (cooldownActive &&
-      (currentTime - cooldownStartTime > 5 * 60 * 1000)) {  // 5分钟冷却
-    cooldownActive = false;
-  }
-
-  // 如果在冷却周期内，禁止开启加热器
-  if (cooldownActive && heaterOn) {
-    setState(Type::HEATER, State::OFF);
   }
 }
 
 void Controller::emergencyStop() noexcept {
-  // 立即关闭所有继电器的物理状态
-  for (size_t i = 0; i < RELAY_COUNT; ++i) {
-    const auto& config = configs_[i];
-    // 强制设置为无效状态（关闭）
-    HAL_GPIO_WritePin(config.port, config.pin,
-                      config.activeLevel ? GPIO_PIN_RESET : GPIO_PIN_SET);
-  }
-
-  // 重置状态
-  relayStates_.reset();  // 全部设为false
+  turnOffAll();
+  initialized_ = false;  // 标记为未初始化，需要重新初始化
 }
 
 }  // namespace ReptileController::Relay
 
+// C接口实现
 extern "C" {
 
-// 继电器状态记录（为C接口兼容性）
-static RelayStatus_t legacyStatus = {.heaterState = RELAY_OFF,
-                                     .fanState = RELAY_OFF,
-                                     .humidifierState = RELAY_OFF,
-                                     .lastUpdateTime = 0};
-
-// C风格接口的辅助函数
-static ReptileController::Relay::Type convertToModernType(RelayType_t legacy) {
-  switch (legacy) {
-    case RELAY_HEATER:
-      return ReptileController::Relay::Type::HEATER;
-    case RELAY_FAN:
-      return ReptileController::Relay::Type::FAN;
-    case RELAY_HUMIDIFIER:
-      return ReptileController::Relay::Type::HUMIDIFIER;
-    default:
-      return ReptileController::Relay::Type::HEATER;  // 默认值
-  }
-}
-
-static ReptileController::Relay::State convertToModernState(
-    RelayState_t legacy) {
-  return (legacy == RELAY_ON) ? ReptileController::Relay::State::ON
-                              : ReptileController::Relay::State::OFF;
-}
-
-static RelayState_t convertToLegacyState(
-    ReptileController::Relay::State modern) {
-  return (modern == ReptileController::Relay::State::ON) ? RELAY_ON : RELAY_OFF;
-}
-
-static void updateLegacyStatus() {
-  using namespace ReptileController::Relay;
-
-  legacyStatus.heaterState =
-      convertToLegacyState(g_controller.getState(Type::HEATER));
-  legacyStatus.fanState =
-      convertToLegacyState(g_controller.getState(Type::FAN));
-  legacyStatus.humidifierState =
-      convertToLegacyState(g_controller.getState(Type::HUMIDIFIER));
-  legacyStatus.lastUpdateTime = HAL_GetTick();
-}
-
-// C风格接口实现
 void RelayControl_Init(void) {
   ReptileController::Relay::g_controller.initialize();
-  updateLegacyStatus();
 }
 
 void RelayControl_Set(RelayType_t relay, RelayState_t state) {
-  const auto modernType = convertToModernType(relay);
-  const auto modernState = convertToModernState(state);
-
-  ReptileController::Relay::g_controller.setState(modernType, modernState);
-  updateLegacyStatus();
+  const auto type = static_cast<ReptileController::Relay::Type>(relay);
+  const auto relayState = static_cast<ReptileController::Relay::State>(state);
+  ReptileController::Relay::g_controller.setState(type, relayState);
 }
 
 RelayState_t RelayControl_Get(RelayType_t relay) {
-  const auto modernType = convertToModernType(relay);
-  const auto modernState =
-      ReptileController::Relay::g_controller.getState(modernType);
-  return convertToLegacyState(modernState);
+  const auto type = static_cast<ReptileController::Relay::Type>(relay);
+  const auto state = ReptileController::Relay::g_controller.getState(type);
+  return static_cast<RelayState_t>(state);
 }
 
 void RelayControl_Toggle(RelayType_t relay) {
-  const auto modernType = convertToModernType(relay);
-  ReptileController::Relay::g_controller.toggleState(modernType);
-  updateLegacyStatus();
+  const auto type = static_cast<ReptileController::Relay::Type>(relay);
+  ReptileController::Relay::g_controller.toggleState(type);
 }
 
 void RelayControl_AllOff(void) {
   ReptileController::Relay::g_controller.turnOffAll();
-  updateLegacyStatus();
 }
 
 RelayStatus_t RelayControl_GetStatus(void) {
-  updateLegacyStatus();
-  return legacyStatus;
+  RelayStatus_t status = {};
+  
+  status.heaterState = RelayControl_Get(RELAY_HEATER);
+  status.fanState = RelayControl_Get(RELAY_FAN);
+  status.humidifierState = RelayControl_Get(RELAY_HUMIDIFIER);
+  status.lastUpdateTime = HAL_GetTick();
+  
+  return status;
 }
 
 void RelayControl_SafetyCheck(void) {
   ReptileController::Relay::g_controller.safetyCheck();
-  updateLegacyStatus();
 }
 
 void RelayControl_EmergencyStop(void) {
   ReptileController::Relay::g_controller.emergencyStop();
-  updateLegacyStatus();
 }
 
 }  // extern "C"

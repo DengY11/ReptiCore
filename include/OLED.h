@@ -6,11 +6,11 @@
 #ifndef __OLED_H
 #define __OLED_H
 
+#include "main.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "main.h"
 
 // OLED显示屏参数
 #define OLED_WIDTH 128  // OLED宽度

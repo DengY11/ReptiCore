@@ -36,12 +36,6 @@ TIM_HandleTypeDef htim2;
 // 命名空间别名
 namespace RC = ReptileController;
 
-// 类型别名（为了兼容C风格接口）
-extern "C" {
-typedef RC::SensorData SensorData_t;
-typedef RC::ControlConfig ControlConfig_t;
-}
-
 // 全局实例
 RC::SensorData g_sensorData;
 RC::ControlConfig g_controlConfig{29.0f, 55.0f, 1.0f, 5.0f};  // 球蟒配置

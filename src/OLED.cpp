@@ -1,305 +1,337 @@
 /*
- * SSD1306 OLED显示驱动实现
+ * SSD1306 OLED显示驱动实现文件
  * OLED.cpp
- * 现代C++风格重构版本
+ * C实现 + C++包裹层
  */
 
 #include "OLED.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <array>
-#include <cstdio>
-#include <cstring>
-
-#include "RelayControl.h"
-
-// 外部变量
+// 外部变量声明
 extern "C" {
 extern I2C_HandleTypeDef hi2c1;
 }
 
-// 命名空间
+// C++命名空间包裹C实现
 namespace ReptileController::Display {
 
-// OLED配置常量
-namespace Config {
-constexpr uint8_t I2C_ADDRESS = 0x78;  // SSD1306 I2C地址
-constexpr uint8_t WIDTH = 128;         // OLED宽度
-constexpr uint8_t HEIGHT = 64;         // OLED高度
-constexpr uint8_t PAGES = 8;           // OLED页数
-}  // namespace Config
+// === 纯C实现部分 ===
+
+// OLED显示缓冲区
+static uint8_t s_displayBuffer[OLED_WIDTH * OLED_PAGES];
+
+// 8x8字体数据（简化版，只包含数字和常用字符）
+static const uint8_t s_font8x8[][8] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // 空格 (32)
+    {0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00}, // ! (33)
+    {0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // " (34)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // # (35) - 占位
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // $ (36) - 占位
+    {0x00, 0x66, 0x66, 0x0C, 0x18, 0x33, 0x33, 0x00}, // % (37)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // & (38) - 占位
+    {0x06, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00}, // ' (39)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // ( (40) - 占位
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // ) (41) - 占位
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // * (42) - 占位
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // + (43) - 占位
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x06}, // , (44)
+    {0x00, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00}, // - (45)
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x00}, // . (46)
+    {0x00, 0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x00}, // / (47)
+    {0x00, 0x3E, 0x63, 0x67, 0x6B, 0x73, 0x3E, 0x00}, // 0 (48)
+    {0x00, 0x0C, 0x0E, 0x0C, 0x0C, 0x0C, 0x3F, 0x00}, // 1 (49)
+    {0x00, 0x1E, 0x33, 0x30, 0x1C, 0x06, 0x3F, 0x00}, // 2 (50)
+    {0x00, 0x1E, 0x33, 0x30, 0x1C, 0x33, 0x1E, 0x00}, // 3 (51)
+    {0x00, 0x38, 0x3C, 0x36, 0x33, 0x7F, 0x30, 0x00}, // 4 (52)
+    {0x00, 0x3F, 0x03, 0x1F, 0x30, 0x33, 0x1E, 0x00}, // 5 (53)
+    {0x00, 0x1C, 0x06, 0x03, 0x1F, 0x33, 0x1E, 0x00}, // 6 (54)
+    {0x00, 0x3F, 0x30, 0x18, 0x0C, 0x06, 0x06, 0x00}, // 7 (55)
+    {0x00, 0x1E, 0x33, 0x33, 0x1E, 0x33, 0x1E, 0x00}, // 8 (56)
+    {0x00, 0x1E, 0x33, 0x3E, 0x30, 0x18, 0x0E, 0x00}, // 9 (57)
+    {0x00, 0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00}, // : (58)
+};
+
+// 获取字符在字体数组中的索引
+static uint8_t getCharIndex(char ch) {
+    if (ch >= 32 && ch <= 58) {
+        return ch - 32;
+    }
+    // 对于中文字符的简单处理，返回特定字符
+    switch (ch) {
+        case 'C': case 'c': return 35; // 用于温度显示
+        default: return 0; // 默认空格
+    }
+}
+
+// 纯C函数：写命令
+static OLED_Status_t writeCommand_C(uint8_t cmd) {
+    uint8_t data[2] = {0x00, cmd}; // 0x00表示命令
+    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(
+        &hi2c1, 0x78, data, 2, 100);
+    return (status == HAL_OK) ? OLED_OK : OLED_ERROR;
+}
+
+// 纯C函数：写数据
+static OLED_Status_t writeData_C(const uint8_t* buffer, uint16_t len) {
+    if (!buffer || len == 0) return OLED_ERROR;
+    
+    // 动态分配临时缓冲区
+    uint8_t* tempBuffer = (uint8_t*)malloc(len + 1);
+    if (!tempBuffer) return OLED_ERROR;
+    
+    tempBuffer[0] = 0x40; // 0x40表示数据
+    memcpy(&tempBuffer[1], buffer, len);
+    
+    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(
+        &hi2c1, 0x78, tempBuffer, len + 1, 1000);
+    
+    free(tempBuffer);
+    return (status == HAL_OK) ? OLED_OK : OLED_ERROR;
+}
+
+// 纯C函数：绘制字符
+static void drawChar_C(uint8_t x, uint8_t y, char ch, uint8_t fontSize) {
+    const uint8_t charIndex = getCharIndex(ch);
+    const uint8_t* charData = s_font8x8[charIndex];
+    
+    for (uint8_t i = 0; i < 8; i++) {
+        uint8_t line = charData[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            if (line & (0x80 >> j)) {
+                if (fontSize == 16) {
+                    // 16号字体 - 2x2像素
+                    for (uint8_t dx = 0; dx < 2; dx++) {
+                        for (uint8_t dy = 0; dy < 2; dy++) {
+                            uint16_t px = x + j * 2 + dx;
+                            uint16_t py = y + i * 2 + dy;
+                            if (px < OLED_WIDTH && py < OLED_HEIGHT) {
+                                uint16_t page = py / 8;
+                                uint8_t bit = py % 8;
+                                s_displayBuffer[px + page * OLED_WIDTH] |= (1 << bit);
+                            }
+                        }
+                    }
+                } else {
+                    // 8号字体
+                    uint16_t px = x + j;
+                    uint16_t py = y + i;
+                    if (px < OLED_WIDTH && py < OLED_HEIGHT) {
+                        uint16_t page = py / 8;
+                        uint8_t bit = py % 8;
+                        s_displayBuffer[px + page * OLED_WIDTH] |= (1 << bit);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 纯C函数：格式化浮点数
+static void formatFloat_C(char* buffer, size_t bufferSize, float number, uint8_t precision) {
+    if (!buffer || bufferSize == 0) return;
+    
+    int intPart = (int)number;
+    float fracPart = number - intPart;
+    
+    if (precision == 0) {
+        snprintf(buffer, bufferSize, "%d", intPart);
+    } else {
+        int multiplier = 1;
+        for (uint8_t i = 0; i < precision; i++) {
+            multiplier *= 10;
+        }
+        int fracInt = (int)(fracPart * multiplier);
+        snprintf(buffer, bufferSize, "%d.%d", intPart, fracInt);
+    }
+}
+
+// === C++包裹层 ===
+
+// C++接口类
+class OLEDController {
+public:
+    static OLED_Status_t initialize() {
+        HAL_Delay(100);
+        
+        // 初始化命令序列
+        const uint8_t initCommands[] = {
+            OLED_CMD_DISPLAY_OFF,
+            OLED_CMD_SET_CLOCK_DIV, 0x80,
+            OLED_CMD_SET_MULTIPLEX, 0x3F,
+            OLED_CMD_SET_DISPLAY_OFFSET, 0x00,
+            OLED_CMD_SET_START_LINE | 0x00,
+            OLED_CMD_CHARGE_PUMP, 0x14,
+            OLED_CMD_MEMORY_MODE, 0x00,
+            OLED_CMD_SEGMENT_REMAP | 0x01,
+            OLED_CMD_COM_SCAN_DEC,
+            OLED_CMD_SET_COM_PINS, 0x12,
+            OLED_CMD_SET_CONTRAST, 0xCF,
+            OLED_CMD_SET_PRECHARGE, 0xF1,
+            OLED_CMD_SET_VCOM_DETECT, 0x40,
+            OLED_CMD_ENTIRE_DISPLAY_ON,
+            OLED_CMD_NORMAL_DISPLAY,
+            OLED_CMD_DISPLAY_ON
+        };
+        
+        for (size_t i = 0; i < sizeof(initCommands); i++) {
+            if (writeCommand_C(initCommands[i]) != OLED_OK) {
+                return OLED_ERROR;
+            }
+        }
+        
+        return clear();
+    }
+    
+    static OLED_Status_t clear() {
+        memset(s_displayBuffer, 0, sizeof(s_displayBuffer));
+        return OLED_OK;
+    }
+    
+    static OLED_Status_t refresh() {
+        // 设置列地址
+        if (writeCommand_C(OLED_CMD_SET_COLUMN_ADDR) != OLED_OK) return OLED_ERROR;
+        if (writeCommand_C(0) != OLED_OK) return OLED_ERROR;
+        if (writeCommand_C(OLED_WIDTH - 1) != OLED_OK) return OLED_ERROR;
+        
+        // 设置页地址
+        if (writeCommand_C(OLED_CMD_SET_PAGE_ADDR) != OLED_OK) return OLED_ERROR;
+        if (writeCommand_C(0) != OLED_OK) return OLED_ERROR;
+        if (writeCommand_C(OLED_PAGES - 1) != OLED_OK) return OLED_ERROR;
+        
+        // 发送显示缓冲区
+        return writeData_C(s_displayBuffer, sizeof(s_displayBuffer));
+    }
+    
+    static OLED_Status_t setPixel(uint8_t x, uint8_t y, uint8_t color) {
+        if (x >= OLED_WIDTH || y >= OLED_HEIGHT) return OLED_ERROR;
+        
+        uint16_t page = y / 8;
+        uint8_t bit = y % 8;
+        uint16_t index = x + page * OLED_WIDTH;
+        
+        if (color) {
+            s_displayBuffer[index] |= (1 << bit);
+        } else {
+            s_displayBuffer[index] &= ~(1 << bit);
+        }
+        
+        return OLED_OK;
+    }
+    
+    static OLED_Status_t showString(uint8_t x, uint8_t y, const char* str, uint8_t fontSize) {
+        if (!str) return OLED_ERROR;
+        
+        uint8_t currentX = x;
+        const uint8_t charWidth = (fontSize == 16) ? 16 : 8;
+        
+        while (*str && currentX + charWidth <= OLED_WIDTH) {
+            drawChar_C(currentX, y, *str, fontSize);
+            currentX += charWidth;
+            str++;
+        }
+        
+        return OLED_OK;
+    }
+    
+    static OLED_Status_t showNumber(uint8_t x, uint8_t y, float number, uint8_t precision, uint8_t fontSize) {
+        char buffer[32];
+        formatFloat_C(buffer, sizeof(buffer), number, precision);
+        return showString(x, y, buffer, fontSize);
+    }
+    
+    static OLED_Status_t showTemperature(float temperature, float target) {
+        showString(0, 0, "Temp:", 16);
+        showNumber(48, 0, temperature, 1, 16);
+        showString(96, 0, "C", 16);
+        
+        showString(0, 16, "Targ:", 16);
+        showNumber(48, 16, target, 1, 16);
+        showString(96, 16, "C", 16);
+        
+        return OLED_OK;
+    }
+    
+    static OLED_Status_t showHumidity(float humidity, float target) {
+        showString(0, 32, "Humi:", 16);
+        showNumber(48, 32, humidity, 1, 16);
+        showString(96, 32, "%", 16);
+        
+        showString(0, 48, "Targ:", 16);
+        showNumber(48, 48, target, 1, 16);
+        showString(96, 48, "%", 16);
+        
+        return OLED_OK;
+    }
+    
+    static OLED_Status_t showSystemStatus() {
+        static uint32_t counter = 0;
+        counter++;
+        
+        const char* indicator = "*";
+        if (counter % 4 == 1) indicator = ".";
+        else if (counter % 4 == 2) indicator = "*";
+        else if (counter % 4 == 3) indicator = ".";
+        
+        return showString(120, 0, indicator, 8);
+    }
+};
+
+// 全局实例
+static OLEDController g_oledController;
 
 }  // namespace ReptileController::Display
 
-// OLED显存缓冲区
-static std::array<uint8_t, OLED_WIDTH * OLED_PAGES> displayBuffer{};
+// === C接口实现 ===
+extern "C" {
 
-// 8x16字体数据表 (简化版，只包含数字和常用字符)
-static constexpr std::array<std::array<uint8_t, 16>, 16> Font8x16 = {
-    {// 字符 '0' (0x30)
-     {{0x00, 0xE0, 0x10, 0x08, 0x08, 0x10, 0xE0, 0x00, 0x00, 0x0F, 0x10, 0x20,
-       0x20, 0x10, 0x0F, 0x00}},
-     // 字符 '1' (0x31)
-     {{0x00, 0x10, 0x10, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x20, 0x3F,
-       0x20, 0x20, 0x00, 0x00}},
-     // 字符 '2' (0x32)
-     {{0x00, 0x70, 0x08, 0x08, 0x08, 0x88, 0x70, 0x00, 0x00, 0x30, 0x28, 0x24,
-       0x22, 0x21, 0x30, 0x00}},
-     // 字符 '3' (0x33)
-     {{0x00, 0x30, 0x08, 0x88, 0x88, 0x48, 0x30, 0x00, 0x00, 0x18, 0x20, 0x20,
-       0x20, 0x11, 0x0E, 0x00}},
-     // 字符 '4' (0x34)
-     {{0x00, 0x00, 0xC0, 0x20, 0x10, 0xF8, 0x00, 0x00, 0x00, 0x07, 0x04, 0x24,
-       0x24, 0x3F, 0x24, 0x00}},
-     // 字符 '5' (0x35)
-     {{0x00, 0xF8, 0x08, 0x88, 0x88, 0x08, 0x08, 0x00, 0x00, 0x19, 0x21, 0x20,
-       0x20, 0x11, 0x0E, 0x00}},
-     // 字符 '6' (0x36)
-     {{0x00, 0xE0, 0x10, 0x88, 0x88, 0x18, 0x00, 0x00, 0x00, 0x0F, 0x11, 0x20,
-       0x20, 0x11, 0x0E, 0x00}},
-     // 字符 '7' (0x37)
-     {{0x00, 0x38, 0x08, 0x08, 0xC8, 0x38, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3F,
-       0x00, 0x00, 0x00, 0x00}},
-     // 字符 '8' (0x38)
-     {{0x00, 0x70, 0x88, 0x08, 0x08, 0x88, 0x70, 0x00, 0x00, 0x1C, 0x22, 0x21,
-       0x21, 0x22, 0x1C, 0x00}},
-     // 字符 '9' (0x39)
-     {{0x00, 0xE0, 0x10, 0x08, 0x08, 0x10, 0xE0, 0x00, 0x00, 0x00, 0x31, 0x22,
-       0x22, 0x11, 0x0F, 0x00}},
-     // 字符 '.' (0x2E)
-     {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x30, 0x00,
-       0x00, 0x00, 0x00, 0x00}},
-     // 字符 '°' (度符号)
-     {{0x00, 0x00, 0x00, 0x18, 0x24, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       0x00, 0x00, 0x00, 0x00}},
-     // 字符 'C'
-     {{0x00, 0xE0, 0x10, 0x08, 0x08, 0x10, 0x20, 0x00, 0x00, 0x0F, 0x10, 0x20,
-       0x20, 0x10, 0x08, 0x00}},
-     // 字符 '%'
-     {{0x00, 0xF0, 0x08, 0x08, 0xF0, 0x00, 0xC0, 0x30, 0x00, 0x18, 0x26, 0x21,
-       0x1E, 0x02, 0x01, 0x00}},
-     // 字符 ' ' (空格)
-     {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-       0x00, 0x00, 0x00, 0x00}},
-     // 字符 ':'
-     {{0x00, 0x00, 0x00, 0xC0, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
-       0x30, 0x00, 0x00, 0x00}}}};
-
-// 字符到字体索引的映射
-constexpr uint8_t getFontIndex(char ch) noexcept {
-  if (ch >= '0' && ch <= '9') return static_cast<uint8_t>(ch - '0');
-  switch (ch) {
-    case '.':
-      return 10;
-    case 'C':
-      return 12;
-    case '%':
-      return 13;
-    case ' ':
-      return 14;
-    case ':':
-      return 15;
-    default:
-      // 处理度符号（UTF-8编码：0xC2 0xB0）
-      if (static_cast<uint8_t>(ch) == 0xB0) return 11;  // 度符号
-      return 14;                                        // 默认返回空格
-  }
-}
-
-// OLED初始化
 OLED_Status_t OLED_Init(void) {
-  HAL_Delay(100);  // 等待OLED稳定
-
-  // 发送初始化命令序列
-  OLED_WriteCommand(OLED_CMD_DISPLAY_OFF);
-  OLED_WriteCommand(OLED_CMD_SET_CLOCK_DIV);
-  OLED_WriteCommand(0x80);
-  OLED_WriteCommand(OLED_CMD_SET_MULTIPLEX);
-  OLED_WriteCommand(0x3F);
-  OLED_WriteCommand(OLED_CMD_SET_DISPLAY_OFFSET);
-  OLED_WriteCommand(0x00);
-  OLED_WriteCommand(OLED_CMD_SET_START_LINE | 0x00);
-  OLED_WriteCommand(OLED_CMD_CHARGE_PUMP);
-  OLED_WriteCommand(0x14);
-  OLED_WriteCommand(OLED_CMD_MEMORY_MODE);
-  OLED_WriteCommand(0x00);
-  OLED_WriteCommand(OLED_CMD_SEGMENT_REMAP | 0x01);
-  OLED_WriteCommand(OLED_CMD_COM_SCAN_DEC);
-  OLED_WriteCommand(OLED_CMD_SET_COM_PINS);
-  OLED_WriteCommand(0x12);
-  OLED_WriteCommand(OLED_CMD_SET_CONTRAST);
-  OLED_WriteCommand(0xCF);
-  OLED_WriteCommand(OLED_CMD_SET_PRECHARGE);
-  OLED_WriteCommand(0xF1);
-  OLED_WriteCommand(OLED_CMD_SET_VCOM_DETECT);
-  OLED_WriteCommand(0x40);
-  OLED_WriteCommand(OLED_CMD_ENTIRE_DISPLAY_ON);
-  OLED_WriteCommand(OLED_CMD_NORMAL_DISPLAY);
-  OLED_WriteCommand(OLED_CMD_DISPLAY_ON);
-
-  // 清空显存
-  OLED_Clear();
-  OLED_Refresh();
-
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::initialize();
 }
 
-// 清空显存
 OLED_Status_t OLED_Clear(void) {
-  displayBuffer.fill(0);
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::clear();
 }
 
-// 刷新显示
 OLED_Status_t OLED_Refresh(void) {
-  OLED_WriteCommand(OLED_CMD_SET_COLUMN_ADDR);
-  OLED_WriteCommand(0);
-  OLED_WriteCommand(127);
-  OLED_WriteCommand(OLED_CMD_SET_PAGE_ADDR);
-  OLED_WriteCommand(0);
-  OLED_WriteCommand(7);
-
-  return OLED_WriteData(displayBuffer.data(), displayBuffer.size());
+    return ReptileController::Display::OLEDController::refresh();
 }
 
-// 设置像素点
 OLED_Status_t OLED_SetPixel(uint8_t x, uint8_t y, uint8_t color) {
-  if (x >= OLED_WIDTH || y >= OLED_HEIGHT) {
-    return OLED_ERROR;
-  }
-
-  const size_t index = x + (y / 8) * OLED_WIDTH;
-  if (color) {
-    displayBuffer[index] |= 1 << (y % 8);
-  } else {
-    displayBuffer[index] &= ~(1 << (y % 8));
-  }
-
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::setPixel(x, y, color);
 }
 
-// 显示字符串
-OLED_Status_t OLED_ShowString(uint8_t x, uint8_t y, const char *str,
-                              uint8_t fontSize) {
-  if (!str) return OLED_ERROR;
-
-  uint8_t currentX = x;
-  while (*str && currentX < OLED_WIDTH - 8) {
-    OLED_DrawChar(currentX, y, *str, fontSize);
-    currentX += 8;  // 字符宽度为8像素
-    ++str;
-  }
-  return OLED_OK;
+OLED_Status_t OLED_ShowString(uint8_t x, uint8_t y, const char* str, uint8_t fontSize) {
+    return ReptileController::Display::OLEDController::showString(x, y, str, fontSize);
 }
 
-// 显示数字
-OLED_Status_t OLED_ShowNumber(uint8_t x, uint8_t y, float number,
-                              uint8_t precision, uint8_t fontSize) {
-  char buffer[20];
-  std::snprintf(buffer, sizeof(buffer), "%.*f", precision, number);
-  return OLED_ShowString(x, y, buffer, fontSize);
+OLED_Status_t OLED_ShowNumber(uint8_t x, uint8_t y, float number, uint8_t precision, uint8_t fontSize) {
+    return ReptileController::Display::OLEDController::showNumber(x, y, number, precision, fontSize);
 }
 
-// 显示温度信息
 OLED_Status_t OLED_ShowTemperature(float temperature, float target) {
-  char buffer[32];
-
-  // 显示当前温度
-  OLED_ShowString(0, 0, "温度:", FONT_SIZE_16);
-  std::snprintf(buffer, sizeof(buffer), "%.1f°C", temperature);
-  OLED_ShowString(40, 0, buffer, FONT_SIZE_16);
-
-  // 显示目标温度
-  OLED_ShowString(0, 16, "目标:", FONT_SIZE_16);
-  std::snprintf(buffer, sizeof(buffer), "%.1f°C", target);
-  OLED_ShowString(40, 16, buffer, FONT_SIZE_16);
-
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::showTemperature(temperature, target);
 }
 
-// 显示湿度信息
 OLED_Status_t OLED_ShowHumidity(float humidity, float target) {
-  char buffer[32];
-
-  // 显示当前湿度
-  OLED_ShowString(0, 32, "湿度:", FONT_SIZE_16);
-  std::snprintf(buffer, sizeof(buffer), "%.1f%%", humidity);
-  OLED_ShowString(40, 32, buffer, FONT_SIZE_16);
-
-  // 显示目标湿度
-  OLED_ShowString(0, 48, "目标:", FONT_SIZE_16);
-  std::snprintf(buffer, sizeof(buffer), "%.1f%%", target);
-  OLED_ShowString(40, 48, buffer, FONT_SIZE_16);
-
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::showHumidity(humidity, target);
 }
 
-// 显示系统状态
 OLED_Status_t OLED_ShowSystemStatus(void) {
-  // 在右侧显示继电器状态
-  constexpr uint8_t x = 90;
-
-  // 加热器状态
-  if (RelayControl_Get(RELAY_HEATER) == RELAY_ON) {
-    OLED_ShowString(x, 0, "H", FONT_SIZE_16);
-  }
-
-  // 风扇状态
-  if (RelayControl_Get(RELAY_FAN) == RELAY_ON) {
-    OLED_ShowString(x + 10, 0, "F", FONT_SIZE_16);
-  }
-
-  // 雾化器状态
-  if (RelayControl_Get(RELAY_HUMIDIFIER) == RELAY_ON) {
-    OLED_ShowString(x + 20, 0, "M", FONT_SIZE_16);
-  }
-
-  return OLED_OK;
+    return ReptileController::Display::OLEDController::showSystemStatus();
 }
 
-// 写入命令
 OLED_Status_t OLED_WriteCommand(uint8_t cmd) {
-  const std::array<uint8_t, 2> data = {0x00, cmd};  // 0x00表示命令
-  const HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(
-      &hi2c1, ReptileController::Config::OLED_I2C_ADDRESS,
-      const_cast<uint8_t *>(data.data()), 2, 100);
-  return (status == HAL_OK) ? OLED_OK : OLED_ERROR;
+    return ReptileController::Display::writeCommand_C(cmd);
 }
 
-// 写入数据
-OLED_Status_t OLED_WriteData(uint8_t *data, uint16_t len) {
-  if (!data || len == 0) return OLED_ERROR;
-
-  // 动态分配缓冲区
-  auto buffer = std::make_unique<uint8_t[]>(len + 1);
-  buffer[0] = 0x40;  // 0x40表示数据
-  std::memcpy(&buffer[1], data, len);
-
-  const HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(
-      &hi2c1, ReptileController::Config::OLED_I2C_ADDRESS, buffer.get(),
-      len + 1, 1000);
-  return (status == HAL_OK) ? OLED_OK : OLED_ERROR;
+OLED_Status_t OLED_WriteData(uint8_t* data, uint16_t len) {
+    return ReptileController::Display::writeData_C(data, len);
 }
 
-// 绘制字符
 void OLED_DrawChar(uint8_t x, uint8_t y, char ch, uint8_t fontSize) {
-  if (fontSize != FONT_SIZE_16) return;
-
-  const uint8_t fontIndex = getFontIndex(ch);
-  const auto &fontData = Font8x16[fontIndex];
-
-  for (int i = 0; i < 8; ++i) {
-    for (int j = 0; j < 8; ++j) {
-      if (fontData[i] & (0x80 >> j)) {
-        OLED_SetPixel(x + j, y + i, 1);
-      }
-    }
-  }
-
-  for (int i = 0; i < 8; ++i) {
-    for (int j = 0; j < 8; ++j) {
-      if (fontData[i + 8] & (0x80 >> j)) {
-        OLED_SetPixel(x + j, y + i + 8, 1);
-      }
-    }
-  }
+    ReptileController::Display::drawChar_C(x, y, ch, fontSize);
 }
+
+}  // extern "C"

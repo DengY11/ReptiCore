@@ -6,21 +6,21 @@
 
 #pragma once
 
-#ifdef __cplusplus
+// STM32 HAL库 - 纯C头文件
 extern "C" {
-#endif
-
-// STM32 HAL库
 #include "stm32f4xx_hal.h"
 #include "stm32f4xx_hal_gpio.h"
 #include "stm32f4xx_hal_i2c.h"
 #include "stm32f4xx_hal_tim.h"
 #include "stm32f4xx_hal_uart.h"
 
-#ifdef __cplusplus
+// C函数声明
+void Error_Handler(void);
+void SystemClock_Config(void);
 }
 
-// C++标准库
+#ifdef __cplusplus
+// C++标准库 - 只在C++编译时包含
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -41,19 +41,19 @@ constexpr uint8_t OLED_I2C_ADDRESS = 0x78;       // SSD1306 OLED I2C地址
 // GPIO引脚配置
 namespace Pins {
 namespace DHT22 {
-constexpr auto PORT = GPIOA;
-constexpr auto PIN = GPIO_PIN_1;
+const auto PORT = GPIOA;
+const auto PIN = GPIO_PIN_1;
 }  // namespace DHT22
 
 namespace Relay {
-constexpr auto HEATER_PORT = GPIOC;
-constexpr auto HEATER_PIN = GPIO_PIN_13;
+const auto HEATER_PORT = GPIOC;
+const auto HEATER_PIN = GPIO_PIN_13;
 
-constexpr auto FAN_PORT = GPIOC;
-constexpr auto FAN_PIN = GPIO_PIN_14;
+const auto FAN_PORT = GPIOC;
+const auto FAN_PIN = GPIO_PIN_14;
 
-constexpr auto HUMIDIFIER_PORT = GPIOC;
-constexpr auto HUMIDIFIER_PIN = GPIO_PIN_15;
+const auto HUMIDIFIER_PORT = GPIOC;
+const auto HUMIDIFIER_PIN = GPIO_PIN_15;
 }  // namespace Relay
 }  // namespace Pins
 
@@ -76,12 +76,12 @@ class SensorData {
         isValid_{valid} {}
 
   // Getter方法（const正确性）
-  [[nodiscard]] float getTemperature() const noexcept { return temperature_; }
-  [[nodiscard]] float getHumidity() const noexcept { return humidity_; }
-  [[nodiscard]] uint32_t getLastUpdateTime() const noexcept {
+  float getTemperature() const noexcept { return temperature_; }
+  float getHumidity() const noexcept { return humidity_; }
+  uint32_t getLastUpdateTime() const noexcept {
     return lastUpdateTime_;
   }
-  [[nodiscard]] bool isValid() const noexcept { return isValid_; }
+  bool isValid() const noexcept { return isValid_; }
 
   // Setter方法
   void setTemperature(float temp) noexcept { temperature_ = temp; }
@@ -120,14 +120,14 @@ class ControlConfig {
         humidityTolerance_{humTol} {}
 
   // Getter方法（const正确性）
-  [[nodiscard]] float getTargetTemp() const noexcept { return targetTemp_; }
-  [[nodiscard]] float getTargetHumidity() const noexcept {
+  float getTargetTemp() const noexcept { return targetTemp_; }
+  float getTargetHumidity() const noexcept {
     return targetHumidity_;
   }
-  [[nodiscard]] float getTempTolerance() const noexcept {
+  float getTempTolerance() const noexcept {
     return tempTolerance_;
   }
-  [[nodiscard]] float getHumidityTolerance() const noexcept {
+  float getHumidityTolerance() const noexcept {
     return humidityTolerance_;
   }
 
@@ -163,13 +163,4 @@ extern ControlConfig g_controlConfig;
 
 }  // namespace ReptileController
 
-extern "C" {
-#endif
-
-// C函数声明
-void Error_Handler(void);
-void SystemClock_Config(void);
-
-#ifdef __cplusplus
-}
-#endif
+#endif  // __cplusplus
